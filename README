@@ -1,46 +1,82 @@
-xv6 is a re-implementation of Dennis Ritchie's and Ken Thompson's Unix
-Version 6 (v6).  xv6 loosely follows the structure and style of v6,
-but is implemented for a modern RISC-V multiprocessor using ANSI C.
+# xv6-riscv Operating System Enhancements – Academic Project
 
-ACKNOWLEDGMENTS
+This repository is a customized implementation of the [xv6-riscv](https://github.com/mit-pdos/xv6-riscv) teaching operating system. It was developed as part of an Operating Systems course to explore internal mechanisms of UNIX-like kernels. The work is structured in three distinct parts: user-level command development, system call implementation, and kernel-level scheduling with performance analysis.
 
-xv6 is inspired by John Lions's Commentary on UNIX 6th Edition (Peer
-to Peer Communications; ISBN: 1-57398-013-7; 1st edition (June 14,
-2000)).  See also https://pdos.csail.mit.edu/6.1810/, which provides
-pointers to on-line resources for v6.
+---
 
-The following people have made contributions: Russ Cox (context switching,
-locking), Cliff Frey (MP), Xiao Yu (MP), Nickolai Zeldovich, and Austin
-Clements.
+## Project Objectives
 
-We are also grateful for the bug reports and patches contributed by
-Takahiro Aoyagi, Marcelo Arroyo, Silas Boyd-Wickizer, Anton Burtsev,
-carlclone, Ian Chen, Dan Cross, Cody Cutler, Mike CAT, Tej Chajed,
-Asami Doi,Wenyang Duan, eyalz800, Nelson Elhage, Saar Ettinger, Alice
-Ferrazzi, Nathaniel Filardo, flespark, Peter Froehlich, Yakir Goaron,
-Shivam Handa, Matt Harvey, Bryan Henry, jaichenhengjie, Jim Huang,
-Matúš Jókay, John Jolly, Alexander Kapshuk, Anders Kaseorg, kehao95,
-Wolfgang Keller, Jungwoo Kim, Jonathan Kimmitt, Eddie Kohler, Vadim
-Kolontsov, Austin Liew, l0stman, Pavan Maddamsetti, Imbar Marinescu,
-Yandong Mao, Matan Shabtay, Hitoshi Mitake, Carmi Merimovich, Mark
-Morrissey, mtasm, Joel Nider, Hayato Ohhashi, OptimisticSide,
-phosphagos, Harry Porter, Greg Price, RayAndrew, Jude Rich, segfault,
-Ayan Shafqat, Eldar Sehayek, Yongming Shen, Fumiya Shigemitsu, snoire,
-Taojie, Cam Tenny, tyfkda, Warren Toomey, Stephen Tu, Alissa Tung,
-Rafael Ubal, Amane Uehara, Pablo Ventura, Xi Wang, WaheedHafez,
-Keiichi Watanabe, Lucas Wolf, Nicolas Wolovick, wxdao, Grant Wu, x653,
-Jindong Zhang, Icenowy Zheng, ZhUyU1997, and Zou Chang Wei.
+This project aims to:
+- Extend the xv6 shell with new user-space commands
+- Implement and test new system calls
+- Integrate multiple CPU scheduling algorithms
+- Track and report performance metrics such as turnaround and waiting time
 
-ERROR REPORTS
+---
 
-Please send errors and suggestions to Frans Kaashoek and Robert Morris
-(kaashoek,rtm@mit.edu).  The main purpose of xv6 is as a teaching
-operating system for MIT's 6.1810, so we are more interested in
-simplifications and clarifications than new features.
+## Project Breakdown
 
-BUILDING AND RUNNING XV6
+### Part 1: User Commands
 
-You will need a RISC-V "newlib" tool chain from
-https://github.com/riscv/riscv-gnu-toolchain, and qemu compiled for
-riscv64-softmmu.  Once they are installed, and in your shell
-search path, you can run "make qemu".
+Several new user-space commands were created to emulate common UNIX functionality:
+
+| Command | Description |
+|---------|-------------|
+| `sleep` | Suspends execution for a number of ticks |
+| `find`  | Recursively searches for a file in a directory and subdirectories |
+| `touch` | Creates an empty file or raises an error if it exists |
+| `mv`    | Moves or renames a file using `link` and `unlink` |
+| `cp`    | Copies file content using `open`, `read`, and `write` |
+| `add`   | Accepts two integers, prints their sum |
+| `fact`  | Computes factorial of a non-negative integer |
+
+Usage and error-checking were handled to match typical UNIX-like behavior (e.g., `add ?` outputs help info).
+
+---
+
+### Part 2: System Calls
+
+The following system calls were added and integrated into the kernel:
+
+| System Call   | Purpose |
+|---------------|---------|
+| `kbdint`      | Returns total number of keyboard interrupts |
+| `countsyscall`| Returns number of system calls invoked since boot |
+| `getppid`     | Returns parent process ID |
+| `getptable`   | Returns an array of process info: PID, PPID, state, size, name |
+| `datetime`    | Returns system date and time (based on `mtime`) |
+| `rand`        | Returns pseudo-random integer (LCG seeded by ticks) |
+
+Each system call includes corresponding user-level testing programs.
+
+---
+
+### Part 3: CPU Scheduling and Metrics
+
+The default Round-Robin scheduler was enhanced to support:
+
+- **First-Come First-Served (FCFS)** – Non-preemptive, based on process `ctime`
+- **Priority-Based Scheduling** – Preemptive, using user-defined `priority`
+
+#### Performance Metrics:
+A new syscall `get_metrics()` was implemented to compute:
+- **Turnaround Time** = `etime - ctime`
+- **Waiting Time** = `Turnaround - rtime`
+
+Metrics are collected from all finished processes and averaged for evaluation of scheduler effectiveness.
+
+---
+
+## Build and Run Instructions
+
+### Requirements
+- Linux/macOS
+- RISC-V Toolchain (`riscv64-unknown-elf-gcc`)
+- QEMU (`qemu-system-riscv64`)
+
+### Build and Execute
+
+```bash
+git clone https://github.com/salmayasser23/xv6-riscv-os-project.git
+cd xv6-riscv
+make qemu
