@@ -1,5 +1,18 @@
 struct stat;
 
+
+struct user_proc {
+  int pid;
+  int ppid;
+  int state;
+  uint64 sz;
+  char name[16];
+};
+
+struct datetime;
+int datetime(struct datetime *dt);
+
+
 // system calls
 int fork(void);
 int exit(int) __attribute__((noreturn));
@@ -22,6 +35,25 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
+int kbdint(void);
+int countsyscall(void);
+int getppid(void);
+int getptable(int, struct user_proc*);
+int krand(void);
+int setsched(int);
+int setpriority(int pid, int priority);
+int get_metrics(void);
+int getsched(void);
+
+
+
+
+
+
+
+
+
+
 
 // ulib.c
 int stat(const char*, struct stat*);

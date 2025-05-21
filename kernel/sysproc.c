@@ -5,6 +5,12 @@
 #include "memlayout.h"
 #include "spinlock.h"
 #include "proc.h"
+#include "datetime.h"
+
+#define MTIME_FREQ 10000000  // for 10 MHz timer (typical in QEMU)
+
+
+
 
 uint64
 sys_exit(void)
@@ -90,4 +96,75 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+
+uint64
+sys_datetime(void)
+{
+  uint64 dst;                 // User pointer where datetime struct should be copied
+  struct datetime dt;
+
+  // Retrieve the pointer from the user program (1st argument)
+  argaddr(0, &dst);
+
+  // Get current time in ticks from the mtime register
+  uint64 seconds = r_mtime() / MTIME_FREQ;
+  seconds += BOOT_EPOCH;
+  seconds += 3 * 60 * 60; // add offset for UTC+3
+
+  // Convert UNIX timestamp to datetime
+  epoch_to_datetime(seconds, &dt);
+
+  // Copy the datetime struct to user space
+  if (copyout(myproc()->pagetable, dst, (char *)&dt, sizeof(dt)) < 0)
+    return -1;
+
+  return 0;
+}
+
+uint64 sys_krand(void) {
+  static uint seed = 1;
+  seed = seed * 1664525 + 1013904223;
+  return seed;
+}
+
+extern int sched_mode;
+uint64
+sys_setsched(void) {
+  int n;
+  argint(0, &n);
+  if(n < 0)
+    return -1;
+  printf(">> sys_setsched: changing sched_mode %d → %d\n",sched_mode, n);
+  sched_mode = n;
+  return 0;
+}
+
+extern int sched_mode;
+uint64 sys_getsched(void) {
+  return sched_mode;
+}
+
+
+uint64 sys_setpriority(void)
+{
+  int pid, priority;
+  argint(0, &pid);
+  argint(1, &priority);
+  if (pid < 0 || priority < 0)
+    return -1;
+
+  printf(">> sys_setpriority: pid=%d → new priority=%d\n", pid, priority);
+
+  for (struct proc *p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);  // acquire lock before modifying
+    if (p->pid == pid) {
+      p->priority = priority;
+      release(&p->lock);
+      return 0;
+    }
+    release(&p->lock);
+  }
+  return -1;
 }

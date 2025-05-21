@@ -12,6 +12,13 @@ struct proc proc[NPROC];
 
 struct proc *initproc;
 
+int sched_mode = SCHED_ROUND_ROBIN;  // default scheduler
+
+struct metrics metrics_table[MAX_METRICS];
+int metrics_count = 0;
+
+
+
 int nextpid = 1;
 struct spinlock pid_lock;
 
@@ -33,7 +40,7 @@ void
 proc_mapstacks(pagetable_t kpgtbl)
 {
   struct proc *p;
-  
+
   for(p = proc; p < &proc[NPROC]; p++) {
     char *pa = kalloc();
     if(pa == 0)
@@ -48,7 +55,7 @@ void
 procinit(void)
 {
   struct proc *p;
-  
+
   initlock(&pid_lock, "nextpid");
   initlock(&wait_lock, "wait_lock");
   for(p = proc; p < &proc[NPROC]; p++) {
@@ -93,7 +100,7 @@ int
 allocpid()
 {
   int pid;
-  
+
   acquire(&pid_lock);
   pid = nextpid;
   nextpid = nextpid + 1;
@@ -114,16 +121,24 @@ allocproc(void)
   for(p = proc; p < &proc[NPROC]; p++) {
     acquire(&p->lock);
     if(p->state == UNUSED) {
+      p->ctime = ticks;
+      p->rtime = 0;
+      p->etime = 0;
       goto found;
     } else {
       release(&p->lock);
     }
+
   }
   return 0;
 
 found:
   p->pid = allocpid();
   p->state = USED;
+  // p->ctime = ticks;      // capture creation time
+  p->priority = 5;       // default priority (changeable later)
+  // p->ctime = ticks;
+
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -236,7 +251,7 @@ userinit(void)
 
   p = allocproc();
   initproc = p;
-  
+
   // allocate one user page and copy initcode's instructions
   // and data into it.
   uvmfirst(p->pagetable, initcode, sizeof(initcode));
@@ -372,10 +387,13 @@ exit(int status)
 
   // Parent might be sleeping in wait().
   wakeup(p->parent);
-  
+
   acquire(&p->lock);
 
+
   p->xstate = status;
+  p->etime = ticks;
+
   p->state = ZOMBIE;
 
   release(&wait_lock);
@@ -387,6 +405,65 @@ exit(int status)
 
 // Wait for a child process to exit and return its pid.
 // Return -1 if this process has no children.
+// int
+// wait(uint64 addr)
+// {
+//   struct proc *pp;
+//   int havekids, pid;
+//   struct proc *p = myproc();
+
+//   acquire(&wait_lock);
+
+//   for(;;){
+//     // Scan through table looking for exited children.
+//     havekids = 0;
+//     for(pp = proc; pp < &proc[NPROC]; pp++){
+//       if(pp->parent == p){
+//         // make sure the child isn't still in exit() or swtch().
+//         acquire(&pp->lock);
+
+//         havekids = 1;
+//         if(pp->state == ZOMBIE){
+//           // Found one.
+//           pid = pp->pid;
+//           p->etime = ticks;
+//           if(addr != 0 && copyout(p->pagetable, addr, (char *)&pp->xstate,
+//                                   sizeof(pp->xstate)) < 0) {
+//             release(&pp->lock);
+//             release(&wait_lock);
+//             return -1;
+//           }
+
+//           metrics_table[metrics_count].pid       = pp->pid;
+//           metrics_table[metrics_count].turnaround = pp->etime - pp->ctime;
+//           metrics_table[metrics_count].waiting    = pp->etime - pp->ctime - pp->rtime;
+//           metrics_table[metrics_count].rtime      = pp->rtime;
+//           metrics_table[metrics_count].ctime      = pp->ctime;  // ✅ Make sure you added this field to `struct metrics`
+//           safestrcpy(metrics_table[metrics_count].name, pp->name, 16);
+//           metrics_count++;
+
+
+//           freeproc(pp);
+//           release(&pp->lock);
+//           release(&wait_lock);
+//           return pid;
+//         }
+//         release(&pp->lock);
+//       }
+//     }
+
+//     // No point waiting if we don't have any children.
+//     if(!havekids || killed(p)){
+//       release(&wait_lock);
+//       return -1;
+//     }
+
+//     // Wait for a child to exit.
+//     sleep(p, &wait_lock);  //DOC: wait-sleep
+//   }
+// }
+
+
 int
 wait(uint64 addr)
 {
@@ -397,42 +474,99 @@ wait(uint64 addr)
   acquire(&wait_lock);
 
   for(;;){
-    // Scan through table looking for exited children.
     havekids = 0;
+
     for(pp = proc; pp < &proc[NPROC]; pp++){
       if(pp->parent == p){
-        // make sure the child isn't still in exit() or swtch().
         acquire(&pp->lock);
-
         havekids = 1;
+
         if(pp->state == ZOMBIE){
-          // Found one.
+          // Found an exited child.
           pid = pp->pid;
+
           if(addr != 0 && copyout(p->pagetable, addr, (char *)&pp->xstate,
                                   sizeof(pp->xstate)) < 0) {
             release(&pp->lock);
             release(&wait_lock);
             return -1;
           }
+
+          // ✅ Save performance metrics
+          metrics_table[metrics_count].pid        = pp->pid;
+          metrics_table[metrics_count].turnaround = pp->etime - pp->ctime;
+          metrics_table[metrics_count].waiting    = pp->etime - pp->ctime - pp->rtime;
+          metrics_table[metrics_count].rtime      = pp->rtime;
+          metrics_table[metrics_count].ctime      = pp->ctime;
+          safestrcpy(metrics_table[metrics_count].name, pp->name, 16);
+          metrics_count++;
+
+          // Free the process
           freeproc(pp);
           release(&pp->lock);
           release(&wait_lock);
           return pid;
         }
+
         release(&pp->lock);
       }
     }
 
-    // No point waiting if we don't have any children.
     if(!havekids || killed(p)){
       release(&wait_lock);
       return -1;
     }
-    
-    // Wait for a child to exit.
-    sleep(p, &wait_lock);  //DOC: wait-sleep
+
+    sleep(p, &wait_lock);  // Wait until a child changes state
   }
 }
+
+
+// in kernel/proc.c, after your sys_setpriority() etc.
+struct proc* choose_next_process(void) {
+  struct proc *p, *chosen = 0;
+
+  switch(sched_mode) {
+  case SCHED_ROUND_ROBIN:
+    // pick the first runnable
+    for(p = proc; p < &proc[NPROC]; p++){
+      if(p->state == RUNNABLE)
+        return p;
+    }
+    return 0;
+
+  case SCHED_FCFS:
+    // pick the runnable with smallest creation time
+    for(p = proc; p < &proc[NPROC]; p++){
+      if(p->state != RUNNABLE)
+        continue;
+      // printf("   - sees pid=%d, prio=%d\n", p->pid, p->priority);
+      if(!chosen || p->ctime < chosen->ctime)
+        chosen = p;
+    }
+    // if(chosen)
+    //   printf(">> [sched] chosen pid=%d prio=%d\n", chosen->pid, chosen->priority);
+    return chosen;
+
+  case SCHED_PRIORITY:
+    // pick the runnable with smallest priority number (1 highest)
+    for(p = proc; p < &proc[NPROC]; p++){
+      if(p->state != RUNNABLE)
+        continue;
+      //printf("Scheduler sees pid=%d priority=%d\n", p->pid, p->priority);
+      if (!chosen ||
+        p->priority < chosen->priority ||
+        (p->priority == chosen->priority && p->ctime < chosen->ctime)) {
+        chosen = p;
+    }
+    }
+    return chosen;
+
+  default:
+    return 0;
+  }
+}
+
 
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
@@ -441,6 +575,47 @@ wait(uint64 addr)
 //  - swtch to start running that process.
 //  - eventually that process transfers control
 //    via swtch back to the scheduler.
+// void
+// scheduler(void)
+// {
+//   struct proc *p;
+//   struct cpu *c = mycpu();
+
+//   c->proc = 0;
+//   for(;;){
+//     // The most recent process to run may have had interrupts
+//     // turned off; enable them to avoid a deadlock if all
+//     // processes are waiting.
+//     intr_on();
+
+//     int found = 0;
+//     for(p = proc; p < &proc[NPROC]; p++) {
+//       acquire(&p->lock);
+//       if(p->state == RUNNABLE) {
+//         // Switch to chosen process.  It is the process's job
+//         // to release its lock and then reacquire it
+//         // before jumping back to us.
+//         p->state = RUNNING;
+//         c->proc = p;
+//         swtch(&c->context, &p->context);
+
+//         // Process is done running for now.
+//         // It should have changed its p->state before coming back.
+//         c->proc = 0;
+//         found = 1;
+//       }
+//       release(&p->lock);
+//     }
+//     if(found == 0) {
+//       // nothing to run; stop running on this core until an interrupt.
+//       intr_on();
+//       asm volatile("wfi");
+//     }
+//   }
+// }
+
+// in kernel/proc.c, replace your old scheduler() entirely with this:
+
 void
 scheduler(void)
 {
@@ -449,36 +624,67 @@ scheduler(void)
 
   c->proc = 0;
   for(;;){
-    // The most recent process to run may have had interrupts
-    // turned off; enable them to avoid a deadlock if all
-    // processes are waiting.
+    // re-enable interrupts before we look
     intr_on();
 
-    int found = 0;
-    for(p = proc; p < &proc[NPROC]; p++) {
+    // pick exactly one process according to our policy
+    p = choose_next_process();
+
+    if(p){
+      // grab its lock, re-check, switch, then release
       acquire(&p->lock);
-      if(p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
+      if(p->state == RUNNABLE){
         p->state = RUNNING;
         c->proc = p;
         swtch(&c->context, &p->context);
-
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
         c->proc = 0;
-        found = 1;
       }
       release(&p->lock);
-    }
-    if(found == 0) {
-      // nothing to run; stop running on this core until an interrupt.
+    } else {
+      // nothing to run, wait for the next interrupt
       intr_on();
       asm volatile("wfi");
     }
   }
 }
+
+
+uint64
+sys_get_metrics(void)
+{
+  if (metrics_count == 0) {
+    printf("No finished processes found.\n");
+    return -1;
+  }
+
+  int total_tat = 0, total_wt = 0;
+  int counted = 0;
+
+  for (int i = 0; i < metrics_count; i++) {
+    struct metrics *m = &metrics_table[i];
+
+    if (strncmp(m->name, "spin", 4) != 0)
+      continue;
+
+    printf("PID %d (%s): Turnaround = %d, Waiting = %d, Runtime = %d, ctime = %lu\n",
+           m->pid, m->name, m->turnaround, m->waiting, m->rtime, m->ctime);
+
+    total_tat += m->turnaround;
+    total_wt  += m->waiting;
+    counted++;
+  }
+
+  if (counted == 0) {
+    printf("No 'spin' processes found.\n");
+    return -1;
+  }
+
+  printf("\nAverage Turnaround Time: %d\n", total_tat / counted);
+  printf("Average Waiting Time   : %d\n", total_wt / counted);
+  return 0;
+}
+
+
 
 // Switch to scheduler.  Must hold only p->lock
 // and have changed proc->state. Saves and restores
@@ -548,7 +754,7 @@ void
 sleep(void *chan, struct spinlock *lk)
 {
   struct proc *p = myproc();
-  
+
   // Must acquire p->lock in order to
   // change p->state and then call sched.
   // Once we hold p->lock, we can be
@@ -627,7 +833,7 @@ int
 killed(struct proc *p)
 {
   int k;
-  
+
   acquire(&p->lock);
   k = p->killed;
   release(&p->lock);

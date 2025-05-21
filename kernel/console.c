@@ -30,6 +30,9 @@
 // called by printf(), and to echo input characters,
 // but not from write().
 //
+
+int kbd_intr_count= 0;
+
 void
 consputc(int c)
 {
@@ -43,7 +46,7 @@ consputc(int c)
 
 struct {
   struct spinlock lock;
-  
+
   // input
 #define INPUT_BUF_SIZE 128
   char buf[INPUT_BUF_SIZE];
@@ -59,13 +62,22 @@ int
 consolewrite(int user_src, uint64 src, int n)
 {
   int i;
+  char ch;
+  // for(i = 0; i < n; i++){
+  //   char c;
+  //   if(either_copyin(&c, user_src, src+i, 1) == -1)
+  //     break;
+  //   uartputc(c);
+  // }
 
+  // Grab the console lock once for the _whole_ write
+  acquire(&cons.lock);
   for(i = 0; i < n; i++){
-    char c;
-    if(either_copyin(&c, user_src, src+i, 1) == -1)
+    if(either_copyin(&ch, user_src, src + i, 1) == -1)
       break;
-    uartputc(c);
+    uartputc(ch);   // raw character output, no re-lock
   }
+  release(&cons.lock);
 
   return i;
 }
@@ -171,10 +183,10 @@ consoleintr(int c)
         cons.w = cons.e;
         wakeup(&cons.r);
       }
+      kbd_intr_count++;
     }
     break;
   }
-  
   release(&cons.lock);
 }
 

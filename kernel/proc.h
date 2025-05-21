@@ -1,3 +1,10 @@
+#define SCHED_ROUND_ROBIN 0
+#define SCHED_FCFS         1
+#define SCHED_PRIORITY     2
+
+extern int sched_mode;  // declared in proc.c
+
+
 // Saved registers for kernel context switches.
 struct context {
   uint64 ra;
@@ -104,4 +111,24 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  uint64 ctime;    // For FCFS: process creation time
+  int priority;    // For Priority scheduling
+  uint64 etime;   // end time
+  uint64 rtime;   // running time (total time on CPU)
+
+
 };
+extern struct proc proc[NPROC];
+
+struct metrics {
+  int pid;
+  int turnaround;
+  int waiting;
+  int rtime;
+  char name[16];
+  uint64 ctime;
+};
+
+#define MAX_METRICS 64
+extern struct metrics metrics_table[MAX_METRICS];
+extern int metrics_count;
